@@ -1,61 +1,94 @@
 package main
 
 import (
-	"flag"
-	"fmt"
+	"context"
+	"errors"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"path"
 	"path/filepath"
+	"time"
 )
 
+var baseDirectory string
+
 func handler(w http.ResponseWriter, r *http.Request) {
-	path := "." + r.URL.Path
-	fmt.Print(r.URL.Path)
-	file, err := os.Stat(path)
+	filePath := path.Join(baseDirectory, r.URL.Path)
+	file, err := os.Stat(filePath)
 	if err == nil && !file.IsDir() {
 		// file exists
-		gz := path + ".gz"
+		gz := filePath + ".gz"
 		file, err := os.Stat(gz)
-		t := mime.TypeByExtension(filepath.Ext(path))
+		t := mime.TypeByExtension(filepath.Ext(filePath))
 		if err == nil && !file.IsDir() && t != "" {
-			fmt.Println(" => " + gz)
 			w.Header().Add("Content-Encoding", "gzip")
 			w.Header().Add("Content-Type", t)
 			http.ServeFile(w, r, gz)
 		} else {
-			fmt.Println(" => " + path)
-			http.ServeFile(w, r, path)
+			http.ServeFile(w, r, filePath)
 		}
 	} else {
 		// file does not exist
-		index := "index.html"
+		index := path.Join(baseDirectory, "index.html")
 		file, err := os.Stat(index)
 		if err == nil && !file.IsDir() {
 			// index.html exists
-			fmt.Println(" => " + index)
 			http.ServeFile(w, r, index)
 		} else {
 			// index.html does not exist
-			fmt.Println(" => NotFound")
 			http.NotFound(w, r)
 		}
 	}
 }
 
 func main() {
-
-	port := ":5050"
-	flag.Parse()
-	if flag.NArg() != 0 {
-		port = ":" + flag.Arg(0)
+	listeningPort, ok := os.LookupEnv("PORT")
+	if !ok {
+		listeningPort = "5050"
 	}
-	fmt.Println("spa-server starting on localhost" + port)
 
-	http.HandleFunc("/", handler)
-	err := http.ListenAndServe(port, nil)
-	if err != nil {
-		log.Fatal("spa-server: ", err)
+	listeningHost, ok := os.LookupEnv("HOST")
+	if !ok {
+		listeningHost = "127.0.0.1"
+	}
+
+	baseDirectory, ok = os.LookupEnv("BASE_DIRECTORY")
+	if !ok {
+		baseDirectory = "."
+	}
+
+	router := http.NewServeMux()
+	router.HandleFunc("/", handler)
+
+	server := &http.Server{
+		Addr:    net.JoinHostPort(listeningHost, listeningPort),
+		Handler: router,
+	}
+
+	exitSignal := make(chan os.Signal, 1)
+	signal.Notify(exitSignal, os.Interrupt)
+
+	go func() {
+		<-exitSignal
+
+		log.Println("Received shutdown signal, shutting down")
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		err := server.Shutdown(ctx)
+		if err != nil {
+			log.Printf("Error occured during shutting down HTTP server: %s", err.Error())
+		}
+	}()
+
+	log.Printf("HTTP server listening on %s", server.Addr)
+
+	err := server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("Error occured during listening to HTTP server: %s", err.Error())
 	}
 }
