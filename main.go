@@ -17,6 +17,7 @@ import (
 var baseDirectory string
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Incoming request: %s %s", r.Method, r.URL.Path)
 	filePath := path.Join(baseDirectory, r.URL.Path)
 	file, err := os.Stat(filePath)
 	if err == nil && !file.IsDir() {
@@ -29,6 +30,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add("Content-Type", t)
 			http.ServeFile(w, r, gz)
 		} else {
+			w.Header().Add("Content-Type", t)
 			http.ServeFile(w, r, filePath)
 		}
 	} else {
@@ -37,6 +39,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		file, err := os.Stat(index)
 		if err == nil && !file.IsDir() {
 			// index.html exists
+			w.Header().Add("Content-Type", "text/html")
 			http.ServeFile(w, r, index)
 		} else {
 			// index.html does not exist
